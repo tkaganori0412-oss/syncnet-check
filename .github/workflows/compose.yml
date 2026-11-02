@@ -1,0 +1,25 @@
+name: base-compose
+run-name: compose ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:   { description: "normal base mp4", required: true }
+      silent_url: { description: "mouth-closed base mp4", required: true }
+      audio_url:  { description: "voice mp3", required: true }
+      min_sil:    { description: "min silence sec", required: false, default: "0.35" }
+      fade:       { description: "crossfade sec", required: false, default: "0.25" }
+      job_id:     { description: "caller id", required: true }
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && pip install -q requests
+      - name: run
+        env: { N: "${{ inputs.base_url }}", S: "${{ inputs.silent_url }}", AU: "${{ inputs.audio_url }}", M: "${{ inputs.min_sil }}", F: "${{ inputs.fade }}" }
+        run: python compose.py "$N" "$S" "$AU" "$M" "$F"
+      - uses: actions/upload-artifact@v4
+        with: { name: "compose-${{ inputs.job_id }}", path: out/, retention-days: 7 }
