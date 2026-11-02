@@ -28,10 +28,19 @@ def bounce(src, dst):
     run(["-i", src, "-filter_complex", "[0:v]fps=30,scale=720:1264,setsar=1,split[a][b];[b]reverse[r];[a][r]concat=n=2:v=1[o]", "-map", "[o]", "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "fb.mp4"])
     run(["-stream_loop", "-1", "-i", "fb.mp4", "-t", f"{A:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", dst])
 bounce("norm.mp4", "n.mp4"); bounce("sil.mp4", "s.mp4")
-# 重みの式（無音の区間の内側で 0→1→0）
-terms = [f"clip(min((T-{a:.3f})/{fade},({b:.3f}-T)/{fade}),0,1)" for a, b in sil if b - a >= min_sil]
-W = "min(1," + "+".join(terms) + ")" if terms else "0"
-expr = f"A*(1-{W})+B*({W})"
-run(["-i", "n.mp4", "-i", "s.mp4", "-filter_complex", f"[0:v][1:v]blend=all_expr='{expr}'[o]", "-map", "[o]", "-t", f"{A:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "out/composite.mp4"])
+# 重み（無音の区間の内側で 0→1→0）をコマごとに作り、小さな灰色の動画にして重ね合わせる（速い）
+F = 30; nF = int(A * F) + 1
+use = [(a, b) for a, b in sil if b - a >= min_sil]
+w = []
+for k in range(nF):
+    t = k / F; v = 0.0
+    for a, b in use:
+        v = max(v, min(1.0, max(0.0, min((t - a) / fade, (b - t) / fade))))
+    w.append(int(round(v * 255)))
+open("mask.gray", "wb").write(bytes(sum(([x] * 4 for x in w), [])))
+run(["-f", "rawvideo", "-pix_fmt", "gray", "-s", "2x2", "-r", str(F), "-i", "mask.gray", "-i", "n.mp4", "-i", "s.mp4",
+     "-filter_complex", "[0:v]scale=720:1264:flags=neighbor,format=gray[m];[2:v]format=yuva420p[sv];[sv][m]alphamerge[sa];[1:v][sa]overlay=0:0:shortest=1,format=yuv420p[o]",
+     "-map", "[o]", "-t", f"{A:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-movflags", "+faststart", "out/composite.mp4"])
+terms = use
 info = {"audio_sec": round(A, 3), "silences": [[round(a, 2), round(b, 2)] for a, b in sil], "used": len(terms), "size": os.path.getsize("out/composite.mp4")}
 json.dump(info, open("out/info.json", "w")); print(json.dumps(info))
