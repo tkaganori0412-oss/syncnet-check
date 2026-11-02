@@ -12,10 +12,22 @@ def setup():
         subprocess.run(["git", "clone", "--depth", "1", "https://github.com/joonson/syncnet_python.git", REPO], check=True)
     if not os.path.exists(MODEL):
         os.makedirs(os.path.dirname(MODEL), exist_ok=True)
-        subprocess.run(["wget", "-q", "-O", MODEL, "https://www.robots.ox.ac.uk/~vgg/software/lipsync/data/syncnet_v2.model"], check=True)
+        # 11-02：大学の元が GitHub から応答しない＝GO医師の了承（12:25「写しでOK」）で写しを先に使う
+        urls = ["https://huggingface.co/Hyathi/Preprocess/resolve/main/syncnet_v2.model",
+                "https://huggingface.co/lithiumice/syncnet/resolve/main/syncnet_v2.model",
+                "https://www.robots.ox.ac.uk/~vgg/software/lipsync/data/syncnet_v2.model"]
+        for u in urls:
+            r = subprocess.run(["wget", "-q", "--timeout=60", "--tries=2", "-O", MODEL, u])
+            if r.returncode == 0 and os.path.getsize(MODEL) > 10_000_000:
+                print("model from", u, os.path.getsize(MODEL), flush=True); break
+        else:
+            raise RuntimeError("SyncNet の重みが取れない")
 setup()
 sys.path.insert(0, REPO)
 from SyncNetInstance import SyncNetInstance  # noqa: E402
+import torch  # noqa: E402
+_load = torch.load  # 写しの重みは「数字だけ」として読む（中の仕掛けを動かさない）
+torch.load = lambda *a, **k: _load(*a, **{**k, "weights_only": True})
 NET = SyncNetInstance(device="cpu")
 NET.loadParameters(MODEL)
 CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
