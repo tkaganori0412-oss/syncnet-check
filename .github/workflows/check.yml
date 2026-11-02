@@ -1,0 +1,27 @@
+name: syncnet-check
+run-name: check ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      video_url: { description: "mp4 URL", required: true }
+      bad_conf:  { description: "bad threshold", required: false, default: "3.0" }
+      job_id:    { description: "caller id", required: true }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - name: tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: model cache
+        uses: actions/cache@v4
+        with: { path: syncnet_python, key: syncnet-v2-1 }
+      - run: pip install -r requirements.txt
+      - name: run
+        env: { URL: "${{ inputs.video_url }}", BAD: "${{ inputs.bad_conf }}" }
+        run: python check.py "$URL" "$BAD"
+      - uses: actions/upload-artifact@v4
+        with: { name: "result-${{ inputs.job_id }}", path: out/result.json, retention-days: 7 }

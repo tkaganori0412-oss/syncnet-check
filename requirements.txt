@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.3.1
+numpy<2
+scipy
+opencv-python-headless
+python_speech_features
+requests
