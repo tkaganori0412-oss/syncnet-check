@@ -18,7 +18,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: model cache
         uses: actions/cache@v4
-        with: { path: syncnet_python, key: syncnet-v2-1 }
+        with: { path: syncnet_python, key: syncnet-v2-2 }
       - run: pip install -r requirements.txt
       - name: run
         env: { URL: "${{ inputs.video_url }}", BAD: "${{ inputs.bad_conf }}" }
