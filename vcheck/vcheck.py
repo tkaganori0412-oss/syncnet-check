@@ -103,12 +103,16 @@ try:
     red_rings = []
     for t, fr in ocr_frames:
         for rg in rings(fr): red_rings.append({"t": t, **rg})
-    texts = []
+    texts = []; text_any = []
     for t, fr in ocr_frames:
         small = cv2.resize(fr, (fr.shape[1] // 2, fr.shape[0] // 2))
         for box, txt, cf in rd.readtext(small):
             if cf >= 0.5 and len(txt.strip()) >= 2:
                 texts.append({"t": t, "text": txt.strip(), "conf": round(float(cf), 2)})
+            # 読めなくても字の形がある所（崩れた字幕・にじんだ字）も数える：字の箱の高さが画面の 1.2% 以上・横長
+            ys = [p[1] for p in box]; xs = [p[0] for p in box]; bh = (max(ys) - min(ys)) / small.shape[0]; bw = (max(xs) - min(xs)) / small.shape[1]
+            if bh >= 0.012 and bw >= bh * 1.5 and len(txt.strip()) >= 2:
+                text_any.append({"t": t, "y": round(float(np.mean(ys)) / small.shape[0], 3), "w": round(bw, 3), "conf": round(float(cf), 2), "text": txt.strip()[:20]})
     sec = lambda arr: sorted(set(int(x) for x in arr))
     def runs(ts, gap):
         # 続けて出た区間（コマの間が gap 以下）だけを [始め, 終わり] で返す。1コマだけの見間違いは落とす
@@ -127,11 +131,13 @@ try:
                 "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]),
                 "bad_hand_runs": runs([x["t"] for x in hands if x["bad_hand"]], step / fps + 0.01),
                 "finger_max": sorted([{"t": x["t"], "f": max(x["fingers"] or [0]), "palm": x["palm"], "a": x["area"], "s": x["score"]} for x in hands], key=lambda z: -z["f"])[:8], "texts": texts,
-                "red_rings": red_rings})
+                "red_rings": red_rings, "text_any": text_any,
+                "text_secs": sorted(set(int(x["t"]) for x in text_any))})
 except Exception as e:
     res["error"] = str(e)[:500]
 json.dump(res, open("out/result.json", "w"), ensure_ascii=False)
-summ = {k: v for k, v in res.items() if k not in ("faces", "hands", "video_url", "red_rings", "texts")}
+summ = {k: v for k, v in res.items() if k not in ("faces", "hands", "video_url", "red_rings", "texts", "text_any")}
+summ["text_any_n"] = len(res.get("text_any") or []); summ["text_any_eg"] = (res.get("text_any") or [])[:6]
 # 要約は短く：大きい赤い輪（画面の幅の 25% 以上＝顔を囲む丸）の秒・字は重ならない分だけ
 summ["big_red_ring"] = sorted(set(int(r["t"]) for r in (res.get("red_rings") or []) if r["r"] >= 0.25))
 seen = set(); tx = []
