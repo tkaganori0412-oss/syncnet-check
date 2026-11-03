@@ -6,6 +6,8 @@ on:
       video_url: { description: "mp4 URL", required: true }
       mode:      { description: "raw or final", required: false, default: "raw" }
       job_id:    { description: "caller id", required: true }
+      frames:    { description: "1 = 見本の絵を frames 枝に置く", required: false, default: "0" }
+permissions: { contents: write, actions: read, checks: read }
 jobs:
   vcheck:
     runs-on: ubuntu-latest
@@ -19,7 +21,17 @@ jobs:
         with: { path: ~/.EasyOCR, key: easyocr-ja-en-v1 }
       - run: pip install -r vcheck/requirements.txt
       - name: run
-        env: { URL: "${{ inputs.video_url }}", MODE: "${{ inputs.mode }}" }
+        env: { URL: "${{ inputs.video_url }}", MODE: "${{ inputs.mode }}", FRAMES: "${{ inputs.frames }}" }
         run: python vcheck/vcheck.py "$URL" "$MODE"
       - uses: actions/upload-artifact@v4
         with: { name: "vresult-${{ inputs.job_id }}", path: out/result.json, retention-days: 7 }
+      - name: frames
+        if: ${{ inputs.frames == '1' }}
+        env: { JOB: "${{ inputs.job_id }}" }
+        run: |
+          git config user.name vcheck; git config user.email vcheck@users.noreply.github.com
+          git fetch origin frames || true
+          git checkout -B frames origin/frames 2>/dev/null || git checkout --orphan frames
+          git rm -rq --cached . >/dev/null 2>&1 || true
+          mkdir -p "f/$JOB"; cp out/sheets/*.jpg "f/$JOB/"
+          git add "f/$JOB"; git commit -qm "frames $JOB"; git push -q origin frames

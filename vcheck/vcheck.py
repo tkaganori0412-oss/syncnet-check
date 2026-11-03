@@ -32,6 +32,7 @@ try:
     hd = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.6)
     faces, jumps, hands, mesh_lost = [], [], [], []
     prev = None; ocr_frames = []
+    sec_step = max(1, int(round(fps)))
     i = 0
     while True:
         ok, fr = cap.read()
@@ -65,7 +66,7 @@ try:
                     fingers = [np.linalg.norm(P[a] - P[b]) / palm for a, b in ((4, 2), (8, 5), (12, 9), (16, 13), (20, 17))]
                     bad = any(f > 1.6 for f in fingers) or sum(f < 0.15 for f in fingers) >= 4
                     hands.append({"t": t, "bad_hand": bool(bad), "fingers": [round(f, 2) for f in fingers]})
-            if i % int(round(fps)) == 0: ocr_frames.append((t, fr))
+        if i % sec_step == 0: ocr_frames.append((round(i / fps, 2), fr))
         i += 1
     import easyocr
     rd = easyocr.Reader(["ja", "en"], gpu=False, verbose=False)
@@ -83,6 +84,13 @@ try:
                 (cx, cy), r = cv2.minEnclosingCircle(hull)
                 out.append({"cx": round(cx / W, 3), "cy": round(cy / H, 3), "r": round(r / W, 3), "fill": round(fill, 2)})
         return out
+    if os.environ.get("FRAMES") == "1":
+        # 見本の一覧（1秒1コマ・8枚×1行の横長の絵）を out/sheets に出す（目で確かめる用）
+        os.makedirs("out/sheets", exist_ok=True)
+        th = [cv2.putText(cv2.resize(fr, (216, 384)), "%ds" % int(t), (6, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2) for t, fr in ocr_frames]
+        for k in range(0, len(th), 8):
+            row = th[k:k + 8] + [np.zeros_like(th[0])] * (8 - len(th[k:k + 8]))
+            cv2.imwrite("out/sheets/s%02d.jpg" % (k // 8), np.hstack(row), [cv2.IMWRITE_JPEG_QUALITY, 70])
     red_rings = []
     for t, fr in ocr_frames:
         for rg in rings(fr): red_rings.append({"t": t, **rg})
