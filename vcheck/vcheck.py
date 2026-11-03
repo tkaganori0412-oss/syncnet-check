@@ -7,6 +7,8 @@
 #   mesh_lost … 顔は見えるのに顔の点が取れない秒（形が崩れていると取れない）
 #   hands[]   … 手が見えた秒と、手の点の確かさ（MediaPipe Hands）。指の形がおかしいと点の並びが手の形にならない＝bad_hand（指の長さの比が外れる）
 #   texts[]   … 1コマ/秒ごとに読めた字（EasyOCR 日本語・英語・確かさ 0.5 以上・2字以上）
+#   red_rings[] … 1コマ/秒ごとの赤い輪（中が空いた赤い丸・図形の描き違いの見張り）{t, cx, cy, r}（画面の幅に対する割合）
+# 結果の要約は GitHub の注記（::notice）にも出す（Artifacts を取れない所からでも読めるように）
 import os, sys, json, subprocess, tempfile, math
 import numpy as np, cv2, requests
 import mediapipe as mp
@@ -67,6 +69,23 @@ try:
         i += 1
     import easyocr
     rd = easyocr.Reader(["ja", "en"], gpu=False, verbose=False)
+    def rings(fr):
+        hsv = cv2.cvtColor(fr, cv2.COLOR_BGR2HSV); H, W = fr.shape[:2]
+        m = cv2.inRange(hsv, (0, 120, 90), (10, 255, 255)) | cv2.inRange(hsv, (170, 120, 90), (180, 255, 255))
+        cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE); out = []
+        for c in cs:
+            hull = cv2.convexHull(c); A = cv2.contourArea(hull); P = cv2.arcLength(hull, True)
+            if P < 0.12 * W or A <= 0: continue
+            circ = 4 * math.pi * A / (P * P)
+            mk = np.zeros(m.shape, np.uint8); cv2.drawContours(mk, [hull], -1, 255, -1)
+            fill = float((m[mk > 0] > 0).mean())
+            if circ > 0.6 and fill < 0.5:
+                (cx, cy), r = cv2.minEnclosingCircle(hull)
+                out.append({"cx": round(cx / W, 3), "cy": round(cy / H, 3), "r": round(r / W, 3), "fill": round(fill, 2)})
+        return out
+    red_rings = []
+    for t, fr in ocr_frames:
+        for rg in rings(fr): red_rings.append({"t": t, **rg})
     texts = []
     for t, fr in ocr_frames:
         small = cv2.resize(fr, (fr.shape[1] // 2, fr.shape[0] // 2))
@@ -78,8 +97,14 @@ try:
                 "no_face": sec([f["t"] for f in faces if f["n"] == 0]),
                 "multi_face": sec([f["t"] for f in faces if f["n"] >= 2]),
                 "jumps": jumps, "mesh_lost": sec(mesh_lost), "hands": hands,
-                "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]), "texts": texts})
+                "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]), "texts": texts,
+                "red_rings": red_rings})
 except Exception as e:
     res["error"] = str(e)[:500]
 json.dump(res, open("out/result.json", "w"), ensure_ascii=False)
-print(json.dumps({k: v for k, v in res.items() if k not in ("faces", "hands")}, ensure_ascii=False)[:3000])
+summ = {k: v for k, v in res.items() if k not in ("faces", "hands", "video_url")}
+summ["hands_n"] = len(res.get("hands") or []); summ["faces_n"] = len(res.get("faces") or [])
+js = json.dumps(summ, ensure_ascii=False, separators=(",", ":"))
+print(js[:3000])
+for k in range(0, min(len(js), 9000), 900):
+    print("::notice title=vresult %d::%s" % (k // 900, js[k:k + 900].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")))
