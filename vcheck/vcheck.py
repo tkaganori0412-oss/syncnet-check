@@ -60,12 +60,14 @@ try:
                 prev = None
             hh = hd.process(rgb)
             if hh.multi_hand_landmarks:
-                for lm in hh.multi_hand_landmarks:
+                for lm, hd_c in zip(hh.multi_hand_landmarks, hh.multi_handedness or []):
+                    sc = float(hd_c.classification[0].score)
                     P = np.array([[p.x * w, p.y * h] for p in lm.landmark])
                     palm = np.linalg.norm(P[0] - P[9]) + 1e-6
                     fingers = [np.linalg.norm(P[a] - P[b]) / palm for a, b in ((4, 2), (8, 5), (12, 9), (16, 13), (20, 17))]
-                    bad = any(f > 1.6 for f in fingers) or sum(f < 0.15 for f in fingers) >= 4
-                    hands.append({"t": t, "bad_hand": bool(bad), "fingers": [round(f, 2) for f in fingers]})
+                    # 握った手・腕組みで隠れた指は崩れではない。指が伸びすぎ（手のひらの1.6倍超）だけを、確かな手（0.8 以上）で数える
+                    bad = sc >= 0.8 and any(f > 1.6 for f in fingers)
+                    hands.append({"t": t, "bad_hand": bool(bad), "score": round(sc, 2), "fingers": [round(f, 2) for f in fingers]})
         if i % sec_step == 0: ocr_frames.append((round(i / fps, 2), fr))
         i += 1
     import easyocr
@@ -101,11 +103,23 @@ try:
             if cf >= 0.5 and len(txt.strip()) >= 2:
                 texts.append({"t": t, "text": txt.strip(), "conf": round(float(cf), 2)})
     sec = lambda arr: sorted(set(int(x) for x in arr))
+    def runs(ts, gap):
+        # 続けて出た区間（コマの間が gap 以下）だけを [始め, 終わり] で返す。1コマだけの見間違いは落とす
+        ts = sorted(ts); out = []; st = None; pv = None
+        for x in ts:
+            if st is None: st = pv = x; continue
+            if x - pv <= gap + 1e-6: pv = x; continue
+            if pv > st: out.append([st, pv])
+            st = pv = x
+        if st is not None and pv > st: out.append([st, pv])
+        return out
     res.update({"duration": round(dur, 2), "fps": fps, "faces": faces,
                 "no_face": sec([f["t"] for f in faces if f["n"] == 0]),
                 "multi_face": sec([f["t"] for f in faces if f["n"] >= 2]),
                 "jumps": jumps, "mesh_lost": sec(mesh_lost), "hands": hands,
-                "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]), "texts": texts,
+                "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]),
+                "bad_hand_runs": runs([x["t"] for x in hands if x["bad_hand"]], 1.0 / 4 * step / max(1, round(fps / 4)) if False else 0.26),
+                "finger_max": sorted([{"t": x["t"], "f": max(x["fingers"]), "s": x["score"]} for x in hands], key=lambda z: -z["f"])[:8], "texts": texts,
                 "red_rings": red_rings})
 except Exception as e:
     res["error"] = str(e)[:500]
