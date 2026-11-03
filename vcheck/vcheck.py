@@ -131,7 +131,13 @@ try:
 except Exception as e:
     res["error"] = str(e)[:500]
 json.dump(res, open("out/result.json", "w"), ensure_ascii=False)
-summ = {k: v for k, v in res.items() if k not in ("faces", "hands", "video_url")}
+summ = {k: v for k, v in res.items() if k not in ("faces", "hands", "video_url", "red_rings", "texts")}
+# 要約は短く：大きい赤い輪（画面の幅の 25% 以上＝顔を囲む丸）の秒・字は重ならない分だけ
+summ["big_red_ring"] = sorted(set(int(r["t"]) for r in (res.get("red_rings") or []) if r["r"] >= 0.25))
+seen = set(); tx = []
+for x in (res.get("texts") or []):
+    if x["text"] not in seen: seen.add(x["text"]); tx.append([int(x["t"]), x["text"]])
+summ["texts_u"] = tx[:60]
 summ["hands_n"] = len(res.get("hands") or []); summ["faces_n"] = len(res.get("faces") or [])
 js = json.dumps(summ, ensure_ascii=False, separators=(",", ":"))
 print(js[:3000])
