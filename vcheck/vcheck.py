@@ -1,0 +1,85 @@
+# 動画の検品（Gemini の代わり・数字で決める・同じ動画なら毎回同じ答え）
+# 入力：動画の URL（mp4）・見る種類（raw＝話す動画そのもの／final＝字の入った完成動画）。
+# 出力 out/result.json：
+#   faces[]   … 4コマ/秒ごとの顔の数（MediaPipe Face Detection・確かさ 0.6 以上）
+#   no_face   … 顔が見えない秒・multi_face … 顔が2つ以上の秒
+#   jumps[]   … 顔の形の急な変化（Face Mesh の 468 点の動き÷顔の大きさ が 0.12 を超えたコマ＝溶け・ゆがみ・別人になる崩れの合図）
+#   mesh_lost … 顔は見えるのに顔の点が取れない秒（形が崩れていると取れない）
+#   hands[]   … 手が見えた秒と、手の点の確かさ（MediaPipe Hands）。指の形がおかしいと点の並びが手の形にならない＝bad_hand（指の長さの比が外れる）
+#   texts[]   … 1コマ/秒ごとに読めた字（EasyOCR 日本語・英語・確かさ 0.5 以上・2字以上）
+import os, sys, json, subprocess, tempfile, math
+import numpy as np, cv2, requests
+import mediapipe as mp
+
+URL = sys.argv[1]; MODE = sys.argv[2] if len(sys.argv) > 2 else "raw"
+os.makedirs("out", exist_ok=True)
+res = {"video_url": URL, "mode": MODE, "error": None}
+try:
+    tmp = tempfile.mkdtemp(); src = os.path.join(tmp, "v.mp4")
+    with requests.get(URL, stream=True, timeout=120) as r:
+        r.raise_for_status()
+        with open(src, "wb") as f:
+            for ch in r.iter_content(1 << 20): f.write(ch)
+    cap = cv2.VideoCapture(src)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    dur = n / fps
+    step = max(1, int(round(fps / 4)))
+    fd = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.6)
+    fm = mp.solutions.face_mesh.FaceMesh(static_image_mode=False, max_num_faces=2, refine_landmarks=False, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    hd = mp.solutions.hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.6)
+    faces, jumps, hands, mesh_lost = [], [], [], []
+    prev = None; ocr_frames = []
+    i = 0
+    while True:
+        ok, fr = cap.read()
+        if not ok: break
+        if i % step == 0:
+            t = round(i / fps, 2)
+            rgb = cv2.cvtColor(fr, cv2.COLOR_BGR2RGB)
+            h, w = rgb.shape[:2]
+            d = fd.process(rgb)
+            dets = d.detections or []
+            boxes = [(x.location_data.relative_bounding_box.width * w) for x in dets]
+            faces.append({"t": t, "n": len(dets)})
+            m = fm.process(rgb)
+            if m.multi_face_landmarks:
+                pts = np.array([[p.x * w, p.y * h] for p in m.multi_face_landmarks[0].landmark])
+                size = max(1.0, float(np.ptp(pts[:, 0])))
+                if prev is not None:
+                    pp, ps = prev
+                    c = pts - pts.mean(0); cp = pp - pp.mean(0)
+                    mv = float(np.median(np.linalg.norm(c / size - cp / ps, axis=1)))
+                    if mv > 0.12: jumps.append({"t": t, "move": round(mv, 3)})
+                prev = (pts, size)
+            else:
+                if dets: mesh_lost.append(t)
+                prev = None
+            hh = hd.process(rgb)
+            if hh.multi_hand_landmarks:
+                for lm in hh.multi_hand_landmarks:
+                    P = np.array([[p.x * w, p.y * h] for p in lm.landmark])
+                    palm = np.linalg.norm(P[0] - P[9]) + 1e-6
+                    fingers = [np.linalg.norm(P[a] - P[b]) / palm for a, b in ((4, 2), (8, 5), (12, 9), (16, 13), (20, 17))]
+                    bad = any(f > 1.6 for f in fingers) or sum(f < 0.15 for f in fingers) >= 4
+                    hands.append({"t": t, "bad_hand": bool(bad), "fingers": [round(f, 2) for f in fingers]})
+            if i % int(round(fps)) == 0: ocr_frames.append((t, fr))
+        i += 1
+    import easyocr
+    rd = easyocr.Reader(["ja", "en"], gpu=False, verbose=False)
+    texts = []
+    for t, fr in ocr_frames:
+        small = cv2.resize(fr, (fr.shape[1] // 2, fr.shape[0] // 2))
+        for box, txt, cf in rd.readtext(small):
+            if cf >= 0.5 and len(txt.strip()) >= 2:
+                texts.append({"t": t, "text": txt.strip(), "conf": round(float(cf), 2)})
+    sec = lambda arr: sorted(set(int(x) for x in arr))
+    res.update({"duration": round(dur, 2), "fps": fps, "faces": faces,
+                "no_face": sec([f["t"] for f in faces if f["n"] == 0]),
+                "multi_face": sec([f["t"] for f in faces if f["n"] >= 2]),
+                "jumps": jumps, "mesh_lost": sec(mesh_lost), "hands": hands,
+                "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]), "texts": texts})
+except Exception as e:
+    res["error"] = str(e)[:500]
+json.dump(res, open("out/result.json", "w"), ensure_ascii=False)
+print(json.dumps({k: v for k, v in res.items() if k not in ("faces", "hands")}, ensure_ascii=False)[:3000])

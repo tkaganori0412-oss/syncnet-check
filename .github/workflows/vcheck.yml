@@ -1,0 +1,25 @@
+name: video-check
+run-name: vcheck ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      video_url: { description: "mp4 URL", required: true }
+      mode:      { description: "raw or final", required: false, default: "raw" }
+      job_id:    { description: "caller id", required: true }
+jobs:
+  vcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: vcheck/requirements.txt }
+      - name: ocr model cache
+        uses: actions/cache@v4
+        with: { path: ~/.EasyOCR, key: easyocr-ja-en-v1 }
+      - run: pip install -r vcheck/requirements.txt
+      - name: run
+        env: { URL: "${{ inputs.video_url }}", MODE: "${{ inputs.mode }}" }
+        run: python vcheck/vcheck.py "$URL" "$MODE"
+      - uses: actions/upload-artifact@v4
+        with: { name: "vresult-${{ inputs.job_id }}", path: out/result.json, retention-days: 7 }
