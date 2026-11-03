@@ -23,5 +23,8 @@ jobs:
       - name: run
         env: { URL: "${{ inputs.video_url }}", BAD: "${{ inputs.bad_conf }}" }
         run: python check.py "$URL" "$BAD"
+      - name: notice
+        if: always()
+        run: python -c "import json;d=json.load(open('out/result.json'));d.pop('video_url',None);print('::notice title=result::'+json.dumps(d,separators=(',',':'))[:3500])" || true
       - uses: actions/upload-artifact@v4
         with: { name: "result-${{ inputs.job_id }}", path: out/result.json, retention-days: 7 }
