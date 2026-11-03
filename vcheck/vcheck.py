@@ -60,14 +60,21 @@ try:
                 prev = None
             hh = hd.process(rgb)
             if hh.multi_hand_landmarks:
-                for lm, hd_c in zip(hh.multi_hand_landmarks, hh.multi_handedness or []):
+                wl = hh.multi_hand_world_landmarks or [None] * len(hh.multi_hand_landmarks)
+                for lm, hd_c, wm in zip(hh.multi_hand_landmarks, hh.multi_handedness or [], wl):
                     sc = float(hd_c.classification[0].score)
                     P = np.array([[p.x * w, p.y * h] for p in lm.landmark])
-                    palm = np.linalg.norm(P[0] - P[9]) + 1e-6
-                    fingers = [np.linalg.norm(P[a] - P[b]) / palm for a, b in ((4, 2), (8, 5), (12, 9), (16, 13), (20, 17))]
-                    # 握った手・腕組みで隠れた指は崩れではない。指が伸びすぎ（手のひらの1.6倍超）だけを、確かな手（0.8 以上）で数える
-                    bad = sc >= 0.8 and any(f > 1.6 for f in fingers)
-                    hands.append({"t": t, "bad_hand": bool(bad), "score": round(sc, 2), "fingers": [round(f, 2) for f in fingers]})
+                    bw = float(np.ptp(P[:, 0])) / w; bh = float(np.ptp(P[:, 1])) / h
+                    # 指の長さは手の 3D の点（メートル）で測る＝向きで短く見えるのに引っぱられない
+                    Q = np.array([[p.x, p.y, p.z] for p in wm.landmark]) if wm is not None else None
+                    fingers = []
+                    if Q is not None:
+                        for ch in ((1, 2, 3, 4), (5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20)):
+                            fingers.append(float(sum(np.linalg.norm(Q[ch[k + 1]] - Q[ch[k]]) for k in range(3))))
+                    palm = float(np.linalg.norm(Q[0] - Q[9])) if Q is not None else 0.0
+                    big = bw * bh >= 0.004  # 小さい手・腕組みで隠れた手は判定しない
+                    bad = bool(big and sc >= 0.8 and fingers and (max(fingers[1:]) > 0.13 or palm > 0.14 or palm < 0.05))
+                    hands.append({"t": t, "bad_hand": bad, "score": round(sc, 2), "area": round(bw * bh, 4), "palm": round(palm, 3), "fingers": [round(f, 3) for f in fingers]})
         if i % sec_step == 0: ocr_frames.append((round(i / fps, 2), fr))
         i += 1
     import easyocr
@@ -118,8 +125,8 @@ try:
                 "multi_face": sec([f["t"] for f in faces if f["n"] >= 2]),
                 "jumps": jumps, "mesh_lost": sec(mesh_lost), "hands": hands,
                 "bad_hand": sec([x["t"] for x in hands if x["bad_hand"]]),
-                "bad_hand_runs": runs([x["t"] for x in hands if x["bad_hand"]], 1.0 / 4 * step / max(1, round(fps / 4)) if False else 0.26),
-                "finger_max": sorted([{"t": x["t"], "f": max(x["fingers"]), "s": x["score"]} for x in hands], key=lambda z: -z["f"])[:8], "texts": texts,
+                "bad_hand_runs": runs([x["t"] for x in hands if x["bad_hand"]], step / fps + 0.01),
+                "finger_max": sorted([{"t": x["t"], "f": max(x["fingers"] or [0]), "palm": x["palm"], "a": x["area"], "s": x["score"]} for x in hands], key=lambda z: -z["f"])[:8], "texts": texts,
                 "red_rings": red_rings})
 except Exception as e:
     res["error"] = str(e)[:500]
