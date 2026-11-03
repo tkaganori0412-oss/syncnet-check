@@ -31,7 +31,7 @@ jobs:
         run: |
           git config user.name vcheck; git config user.email vcheck@users.noreply.github.com
           git fetch origin frames || true
-          git checkout -B frames origin/frames 2>/dev/null || git checkout --orphan frames
-          git rm -rq --cached . >/dev/null 2>&1 || true
+          if git rev-parse -q --verify origin/frames >/dev/null; then git checkout -B frames origin/frames; else git checkout --orphan frames; git rm -rq --cached . >/dev/null 2>&1 || true; fi
           mkdir -p "f/$JOB"; cp out/sheets/*.jpg "f/$JOB/"
-          git add "f/$JOB"; git commit -qm "frames $JOB"; git push -q origin frames
+          git add "f/$JOB"; git commit -qm "frames $JOB"
+          for n in 1 2 3 4 5; do git push -q origin frames && break; git pull -q --rebase origin frames; done
