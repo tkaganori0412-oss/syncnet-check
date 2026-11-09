@@ -1,0 +1,25 @@
+name: render
+run-name: render ${{ inputs.job_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      job_url: { description: "job JSON URL (steps of ffmpeg commands)", required: true }
+      job_id:  { description: "caller id", required: true }
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg && pip install -q requests && ffmpeg -hide_banner -buildconf | grep -E "rsvg|freetype" || true
+      - name: run
+        env: { J: "${{ inputs.job_url }}" }
+        run: python render.py "$J"
+      - name: notice
+        if: always()
+        run: python -c "import json;d=json.load(open('out/result.json'));print('::notice title=result::'+json.dumps(d,separators=(',',':'))[:3500])" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "render-${{ inputs.job_id }}", path: out/, retention-days: 3 }
